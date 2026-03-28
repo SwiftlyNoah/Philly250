@@ -1,5 +1,6 @@
 """HUD overlay — reticles, arrows, graphs, and debug insets."""
 
+import math
 from typing import Any, Dict, List, Optional, Tuple
 
 import cv2
@@ -26,6 +27,32 @@ GRAY = (160, 160, 160)
 WHITE = (255, 255, 255)
 CYAN = (255, 255, 0)
 DIM_GREEN = (0, 140, 0)
+
+# Zone thresholds (normalised distance from centre: 0 = centre, 1 = edge).
+# Green  = small central area  (on-target)
+# Yellow = medium warning band
+# Red    = large edge area      (losing target)
+_ZONE_GREEN_MAX = 0.35   # green when norm <= 0.35
+_ZONE_YELLOW_MAX = 0.65  # yellow when 0.35 < norm < 0.65, red beyond
+
+
+def get_zone(
+    error_x: float,
+    error_y: float,
+    half_w: float,
+    half_h: float,
+) -> tuple:
+    """Return (colour_bgr, label, norm_distance) based on target offset.
+
+    *norm_distance* is max(|ex|/half_w, |ey|/half_h) so it equals 1.0 when
+    the target sits right on the frame edge.
+    """
+    norm = max(abs(error_x) / half_w, abs(error_y) / half_h) if half_w and half_h else 0.0
+    if norm < _ZONE_GREEN_MAX:
+        return GREEN, "TRACKING", norm
+    if norm < _ZONE_YELLOW_MAX:
+        return YELLOW, "WARNING", norm
+    return RED, "CRITICAL", norm
 
 
 class VisualOverlay:
@@ -96,11 +123,15 @@ class VisualOverlay:
 
         tx, ty = int(target_pos[0]), int(target_pos[1])
 
-        # Confidence-based colour
-        if confidence > 0.6:
-            col = _lerp_color(YELLOW, GREEN, (confidence - 0.6) / 0.4)
+        # Zone-based colour (position from centre)
+        if error is not None:
+            zone_col, zone_label, zone_norm = get_zone(
+                error[0], error[1], self._cx, self._cy,
+            )
         else:
-            col = _lerp_color(RED, YELLOW, confidence / 0.6)
+            zone_col, zone_label, zone_norm = GREEN, "TRACKING", 0.0
+
+        col = zone_col
 
         # --- Tracking HUD ---
         # Target reticle
@@ -112,16 +143,23 @@ class VisualOverlay:
         if error is not None:
             cv2.line(out, (cx_i, cy_i), (tx, ty), col, 1, cv2.LINE_AA)
 
+        # Zone label near target reticle
+        if error is not None:
+            cv2.putText(
+                out, zone_label, (tx - 20, ty - 25),
+                self._font, 0.45, zone_col, 1,
+            )
+
         # Direction arrow (primary guidance element)
         if error is not None:
             ex, ey = error
-            mag = np.hypot(ex, ey)
+            mag = math.hypot(ex, ey)
             if mag > 5:
                 nx, ny = ex / mag, ey / mag
                 arrow_len = min(mag * 0.6, 120)
                 ax = int(self._cx + nx * arrow_len)
                 ay = int(self._cy + ny * arrow_len)
-                cv2.arrowedLine(out, (cx_i, cy_i), (ax, ay), col, 3, tipLength=0.3)
+                cv2.arrowedLine(out, (cx_i, cy_i), (ax, ay), zone_col, 3, tipLength=0.3)
 
         # Lead indicator
         if velocity is not None:

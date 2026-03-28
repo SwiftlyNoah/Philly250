@@ -106,13 +106,23 @@ class AudioCues:
                 stereo = np.column_stack((mono, mono))
                 self._tones[freq] = pygame.sndarray.make_sound(stereo)
 
+    # Zone thresholds (must stay in sync with visual_overlay.get_zone)
+    _ZONE_GREEN_MAX = 0.35
+    _ZONE_YELLOW_MAX = 0.65
+
     def update(
         self,
         error_x: Optional[float],
         error_y: Optional[float],
         confidence: float,
     ) -> None:
-        """Called every frame. Decides whether and what to play."""
+        """Called every frame. Decides whether and what to play.
+
+        Beep behaviour is driven by *zone* (distance from frame centre):
+          - Green  (norm <= 0.35): silence — on target.
+          - Yellow (0.35 – 0.65): beep every 0.9s for course-correction cues.
+          - Red    (>= 0.65):     beep every 0.4s — target near edge.
+        """
         if not self._enabled or self._muted:
             return
 
@@ -128,16 +138,26 @@ class AudioCues:
                 self._last_beep_time = now
             return
 
-        mag = math.hypot(error_x, error_y)
-        if mag < self._deadzone:
-            return  # On target — silence
+        # Compute normalised distance (0 = centre, 1 = edge)
+        norm = 0.0
+        if self._frame_half_w and self._frame_half_h:
+            norm = max(
+                abs(error_x) / self._frame_half_w,
+                abs(error_y) / self._frame_half_h,
+            )
+
+        # Green zone — on target, stay silent
+        if norm < self._ZONE_GREEN_MAX:
+            return
 
         now = time.time()
 
-        # Beep rate: larger error → shorter interval → faster beeps
-        max_err = math.hypot(self._frame_half_w, self._frame_half_h)
-        norm_err = min(mag / max_err, 1.0)
-        interval = self._max_interval - (self._max_interval - self._min_interval) * norm_err
+        # Yellow zone — beep every 0.9s
+        # Red zone   — beep every 0.4s
+        if norm < self._ZONE_YELLOW_MAX:
+            interval = 0.9
+        else:
+            interval = 0.4
 
         if now - self._last_beep_time < interval:
             return
