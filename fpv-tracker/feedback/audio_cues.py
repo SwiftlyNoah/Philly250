@@ -107,8 +107,8 @@ class AudioCues:
                 self._tones[freq] = pygame.sndarray.make_sound(stereo)
 
     # Zone thresholds (must stay in sync with visual_overlay.get_zone)
-    _ZONE_GREEN_MAX = 0.20
-    _ZONE_YELLOW_MAX = 0.50
+    _ZONE_GREEN_MAX = 0.35
+    _ZONE_YELLOW_MAX = 0.65
 
     def update(
         self,

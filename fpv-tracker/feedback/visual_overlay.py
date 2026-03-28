@@ -32,8 +32,8 @@ DIM_GREEN = (0, 140, 0)
 # Green  = small central area  (on-target)
 # Yellow = medium warning band
 # Red    = large edge area      (losing target)
-_ZONE_GREEN_MAX = 0.20   # green when norm < 0.20
-_ZONE_YELLOW_MAX = 0.50  # yellow when 0.20 <= norm < 0.50, red beyond
+_ZONE_GREEN_MAX = 0.35   # green when norm <= 0.35
+_ZONE_YELLOW_MAX = 0.65  # yellow when 0.35 < norm < 0.65, red beyond
 
 
 def get_zone(
