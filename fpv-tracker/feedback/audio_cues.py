@@ -119,9 +119,9 @@ class AudioCues:
         """Called every frame. Decides whether and what to play.
 
         Beep behaviour is driven by *zone* (distance from frame centre):
-          - Green  (norm < 0.20): silence — on target.
-          - Yellow (0.20 – 0.50): moderate beep rate for course-correction cues.
-          - Red    (>= 0.50):     rapid high-frequency beeps — target near edge.
+          - Green  (norm <= 0.35): silence — on target.
+          - Yellow (0.35 – 0.65): beep every 0.9s for course-correction cues.
+          - Red    (>= 0.65):     beep every 0.4s — target near edge.
         """
         if not self._enabled or self._muted:
             return
@@ -152,16 +152,12 @@ class AudioCues:
 
         now = time.time()
 
-        # Yellow zone — moderate beep rate
-        # Red zone   — very fast beeps
+        # Yellow zone — beep every 0.9s
+        # Red zone   — beep every 0.4s
         if norm < self._ZONE_YELLOW_MAX:
-            # Interpolate within yellow band for gradual urgency increase
-            t = (norm - self._ZONE_GREEN_MAX) / (self._ZONE_YELLOW_MAX - self._ZONE_GREEN_MAX)
-            interval = self._max_interval - (self._max_interval - 0.30) * t  # 1.0s → 0.30s
+            interval = 0.9
         else:
-            # Red zone: fast beeps, getting faster toward the edge
-            t = min((norm - self._ZONE_YELLOW_MAX) / (1.0 - self._ZONE_YELLOW_MAX), 1.0)
-            interval = 0.25 - 0.18 * t  # 0.25s → 0.07s
+            interval = 0.4
 
         if now - self._last_beep_time < interval:
             return
