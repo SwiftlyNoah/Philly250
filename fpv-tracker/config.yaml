@@ -13,14 +13,14 @@ pixel_tracker:
   lk_pyramid_levels: 3
   ransac_threshold: 3.0
   min_inlier_ratio: 0.5
-  diff_threshold: 20        # lowered for faint / few-pixel targets
-  blur_kernel: 3             # smaller blur preserves tiny blobs
+  diff_threshold: 25
+  blur_kernel: 5
   morph_kernel: 3
   min_blob_area: 1
   max_blob_area: 500
-  search_radius: 120
-  edge_margin: 20            # reduced so edge-hugging targets aren't masked
-  target_exclusion_radius: 30
+  search_radius: 100
+  edge_margin: 40
+  target_exclusion_radius: 50
 
 kalman:
   process_noise: 0.01
@@ -31,14 +31,18 @@ kalman:
 
 yolo:
   model_path: "models/best.pt"
-  confidence_threshold: 0.25
-  imgsz: 1280
-  # Sliced inference (SAHI-style) — dramatically improves recall on
-  # tiny / distant drones by running the model on overlapping tiles.
+  confidence_threshold: 0.5
+  imgsz: 640
+  # Sliced inference (SAHI-style) — improves recall on tiny / distant
+  # drones by running the model on tiles at full resolution.
+  # 'adaptive' mode (default) only tiles around the Kalman-predicted
+  # position, keeping inference to ~2 YOLO passes instead of N.
   slice_inference:
     enabled: false          # set to true when tracking very small drones
+    adaptive: true           # true = 1 focused tile + full-frame (fast)
+                             # false = tile the entire frame (thorough)
     slice_size: 640         # tile side length in pixels
-    overlap: 0.25           # fractional overlap between adjacent tiles
+    overlap: 0.25           # fractional overlap (full-frame mode only)
     nms_threshold: 0.5      # IoU threshold for merging duplicate detections
 
 audio:

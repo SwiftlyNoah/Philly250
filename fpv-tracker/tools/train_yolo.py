@@ -251,6 +251,9 @@ Examples
 
   # Small-object mode with offline copy-paste data augmentation
   python train_yolo.py --small-object --copy-paste-aug --imgsz 1280
+
+  # Train + export ONNX for edge deployment (Jetson, etc.)
+  python train_yolo.py --small-object --export onnx
 """,
     )
 
@@ -276,6 +279,10 @@ Examples
     parser.add_argument("--copy-paste-aug", action="store_true",
                         help="Run offline copy-paste augmentation on the training "
                              "split before training (boosts small-object density)")
+    parser.add_argument("--export", type=str, default=None,
+                        choices=["onnx", "torchscript", "engine"],
+                        help="Export the trained model for edge deployment "
+                             "(onnx for generic, engine for TensorRT/Jetson)")
 
     args = parser.parse_args()
 
@@ -336,6 +343,21 @@ Examples
         print(f"Best weights saved to {dest}")
     else:
         print("WARNING: best.pt not found in training output.")
+
+    # Step 5: Optional ONNX / TensorRT export for fast edge deployment
+    if args.export and os.path.exists(best_path):
+        print(f"\nExporting model to {args.export} format for edge deployment...")
+        export_model = YOLO(best_path)
+        export_path = export_model.export(format=args.export, imgsz=args.imgsz)
+        print(f"Exported model: {export_path}")
+        # Copy exported file to weights dir
+        if export_path and os.path.exists(str(export_path)):
+            export_dest = os.path.join(
+                args.weights_dir,
+                os.path.basename(str(export_path)),
+            )
+            shutil.copy2(str(export_path), export_dest)
+            print(f"Exported model saved to {export_dest}")
 
     print("Training complete.")
 

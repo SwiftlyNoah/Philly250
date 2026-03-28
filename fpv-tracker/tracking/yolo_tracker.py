@@ -37,6 +37,7 @@ class YOLOTracker(TrackerBase):
         if not isinstance(slice_cfg, dict):
             slice_cfg = {}
         self._slice_enabled: bool = slice_cfg.get("enabled", False)
+        self._slice_adaptive: bool = slice_cfg.get("adaptive", True)
         self._slice_size: int = slice_cfg.get("slice_size", 640)
         self._slice_overlap: float = slice_cfg.get("overlap", 0.25)
         self._slice_nms_thresh: float = slice_cfg.get("nms_threshold", 0.5)
@@ -153,7 +154,12 @@ class YOLOTracker(TrackerBase):
 
         t0 = time.time()
         if self._slice_enabled:
-            detections = self._sliced_detect(frame)
+            if self._slice_adaptive and self._target_pos is not None:
+                detections = self._adaptive_sliced_detect(
+                    frame, self._target_pos[0], self._target_pos[1]
+                )
+            else:
+                detections = self._sliced_detect(frame)
         else:
             detections = self._full_frame_detect(frame)
         inference_ms = (time.time() - t0) * 1000
@@ -270,6 +276,59 @@ class YOLOTracker(TrackerBase):
                     "xyxy": xyxy.tolist(),
                 })
         return detections
+
+    def _adaptive_sliced_detect(
+        self, frame: np.ndarray, pred_x: float, pred_y: float
+    ) -> List[Dict[str, Any]]:
+        """Run YOLO on a single tile centred on the Kalman prediction.
+
+        Much faster than full sliced inference (1 YOLO pass instead of N)
+        while still giving the small-object resolution boost.  Falls back
+        to a full-frame pass as well and merges both result sets so that
+        newly-appearing drones elsewhere in the frame are not missed.
+        """
+        if self._model is None:
+            return []
+
+        h, w = frame.shape[:2]
+        half = self._slice_size // 2
+
+        # Centre the tile on the prediction, clamped to frame bounds
+        cx = int(max(half, min(pred_x, w - half)))
+        cy = int(max(half, min(pred_y, h - half)))
+        x1 = max(0, cx - half)
+        y1 = max(0, cy - half)
+        x2 = min(w, cx + half)
+        y2 = min(h, cy + half)
+
+        # Run high-res inference on the focused tile
+        tile = frame[y1:y2, x1:x2]
+        tile_dets: List[Dict[str, Any]] = []
+        results = self._model(tile, imgsz=self._imgsz, conf=self._conf_thresh, verbose=False)
+        for r in results:
+            boxes = r.boxes
+            if boxes is None:
+                continue
+            for box in boxes:
+                xyxy = box.xyxy[0].cpu().numpy()
+                conf = float(box.conf[0].cpu().numpy())
+                abs_x1 = xyxy[0] + x1
+                abs_y1 = xyxy[1] + y1
+                abs_x2 = xyxy[2] + x1
+                abs_y2 = xyxy[3] + y1
+                tile_dets.append({
+                    "cx": (abs_x1 + abs_x2) / 2.0,
+                    "cy": (abs_y1 + abs_y2) / 2.0,
+                    "w": abs_x2 - abs_x1,
+                    "h": abs_y2 - abs_y1,
+                    "conf": conf,
+                    "xyxy": [abs_x1, abs_y1, abs_x2, abs_y2],
+                })
+
+        # Also run a cheap full-frame pass so we don't lose new targets
+        full_dets = self._full_frame_detect(frame)
+
+        return self._nms(tile_dets + full_dets, self._slice_nms_thresh)
 
     def _sliced_detect(self, frame: np.ndarray) -> List[Dict[str, Any]]:
         """Run YOLO on overlapping tiles and merge with NMS.
