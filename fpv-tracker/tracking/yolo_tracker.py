@@ -1,7 +1,14 @@
-"""V2 tracker — YOLO detection with Kalman filter smoothing."""
+"""V2 tracker — YOLO detection with Kalman filter smoothing.
+
+Supports optional **SAHI-style sliced inference** for detecting very small /
+distant drones that occupy only a few pixels.  When ``slice_inference`` is
+enabled in the config, the frame is divided into overlapping tiles, each tile
+is run through the YOLO model at full resolution, and the detections are
+merged with NMS — dramatically improving recall on tiny objects.
+"""
 
 import time
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -11,7 +18,12 @@ from .tracker_base import TrackerBase
 
 
 class YOLOTracker(TrackerBase):
-    """Uses a YOLOv8 model for target detection, fused with a Kalman filter."""
+    """Uses a YOLOv8 model for target detection, fused with a Kalman filter.
+
+    When ``slice_inference`` is enabled (recommended for small-object
+    detection), each frame is split into overlapping tiles and inference
+    is run per-tile, then results are merged.
+    """
 
     def __init__(self, config: Dict[str, Any]) -> None:
         super().__init__()
@@ -19,6 +31,15 @@ class YOLOTracker(TrackerBase):
         self._model_path: str = config.get("model_path", "models/best.pt")
         self._conf_thresh: float = config.get("confidence_threshold", 0.5)
         self._imgsz: int = config.get("imgsz", 640)
+
+        # Sliced / tiled inference settings (SAHI-style)
+        slice_cfg = config.get("slice_inference", {})
+        if not isinstance(slice_cfg, dict):
+            slice_cfg = {}
+        self._slice_enabled: bool = slice_cfg.get("enabled", False)
+        self._slice_size: int = slice_cfg.get("slice_size", 640)
+        self._slice_overlap: float = slice_cfg.get("overlap", 0.25)
+        self._slice_nms_thresh: float = slice_cfg.get("nms_threshold", 0.5)
 
         kalman_cfg = config.get("kalman", {})
         if not isinstance(kalman_cfg, dict):
@@ -131,29 +152,13 @@ class YOLOTracker(TrackerBase):
             return self._target_pos, error, self._confidence, debug
 
         t0 = time.time()
-        results = self._model(frame, imgsz=self._imgsz, conf=self._conf_thresh, verbose=False)
+        if self._slice_enabled:
+            detections = self._sliced_detect(frame)
+        else:
+            detections = self._full_frame_detect(frame)
         inference_ms = (time.time() - t0) * 1000
         debug["inference_time_ms"] = inference_ms
-
-        # Collect all detections
-        detections = []
-        for r in results:
-            boxes = r.boxes
-            if boxes is None:
-                continue
-            for box in boxes:
-                xyxy = box.xyxy[0].cpu().numpy()
-                conf = float(box.conf[0].cpu().numpy())
-                cx = (xyxy[0] + xyxy[2]) / 2.0
-                cy = (xyxy[1] + xyxy[3]) / 2.0
-                bw = xyxy[2] - xyxy[0]
-                bh = xyxy[3] - xyxy[1]
-                detections.append({
-                    "cx": cx, "cy": cy,
-                    "w": bw, "h": bh,
-                    "conf": conf,
-                    "xyxy": xyxy.tolist(),
-                })
+        debug["slice_inference"] = self._slice_enabled
 
         debug["all_detections"] = detections
 
@@ -199,19 +204,146 @@ class YOLOTracker(TrackerBase):
         """Run detection and return the centre of the detection nearest to (target_x, target_y)."""
         if self._model is None:
             return None
-        results = self._model(frame, imgsz=self._imgsz, conf=self._conf_thresh, verbose=False)
+
+        if self._slice_enabled:
+            detections = self._sliced_detect(frame)
+        else:
+            detections = self._full_frame_detect(frame)
+
         best_pos = None
         best_dist = float("inf")
+        for det in detections:
+            dist = np.hypot(det["cx"] - target_x, det["cy"] - target_y)
+            if dist < best_dist:
+                best_pos = (float(det["cx"]), float(det["cy"]))
+                best_dist = dist
+        return best_pos
+
+    # ------------------------------------------------------------------
+    # Sliced (SAHI-style) inference
+    # ------------------------------------------------------------------
+
+    def _compute_slices(
+        self, frame_w: int, frame_h: int
+    ) -> List[Tuple[int, int, int, int]]:
+        """Return a list of ``(x1, y1, x2, y2)`` tile rectangles that cover
+        the entire frame with the configured overlap."""
+        step = int(self._slice_size * (1.0 - self._slice_overlap))
+        step = max(step, 1)
+        slices: List[Tuple[int, int, int, int]] = []
+        y = 0
+        while y < frame_h:
+            x = 0
+            y2 = min(y + self._slice_size, frame_h)
+            while x < frame_w:
+                x2 = min(x + self._slice_size, frame_w)
+                slices.append((x, y, x2, y2))
+                if x2 >= frame_w:
+                    break
+                x += step
+            if y2 >= frame_h:
+                break
+            y += step
+        return slices
+
+    def _full_frame_detect(self, frame: np.ndarray) -> List[Dict[str, Any]]:
+        """Run YOLO on the full frame and return a list of detection dicts."""
+        if self._model is None:
+            return []
+        results = self._model(frame, imgsz=self._imgsz, conf=self._conf_thresh, verbose=False)
+        detections: List[Dict[str, Any]] = []
         for r in results:
             boxes = r.boxes
             if boxes is None:
                 continue
             for box in boxes:
                 xyxy = box.xyxy[0].cpu().numpy()
+                conf = float(box.conf[0].cpu().numpy())
                 cx = (xyxy[0] + xyxy[2]) / 2.0
                 cy = (xyxy[1] + xyxy[3]) / 2.0
-                dist = np.hypot(cx - target_x, cy - target_y)
-                if dist < best_dist:
-                    best_pos = (float(cx), float(cy))
-                    best_dist = dist
-        return best_pos
+                bw = xyxy[2] - xyxy[0]
+                bh = xyxy[3] - xyxy[1]
+                detections.append({
+                    "cx": cx, "cy": cy,
+                    "w": bw, "h": bh,
+                    "conf": conf,
+                    "xyxy": xyxy.tolist(),
+                })
+        return detections
+
+    def _sliced_detect(self, frame: np.ndarray) -> List[Dict[str, Any]]:
+        """Run YOLO on overlapping tiles and merge with NMS.
+
+        Each tile is run at ``self._imgsz`` resolution, so small objects
+        that would be invisible in a downscaled full-frame pass become
+        clearly visible inside their tile.
+        """
+        if self._model is None:
+            return []
+
+        h, w = frame.shape[:2]
+        slices = self._compute_slices(w, h)
+
+        all_dets: List[Dict[str, Any]] = []
+        for x1, y1, x2, y2 in slices:
+            tile = frame[y1:y2, x1:x2]
+            results = self._model(tile, imgsz=self._imgsz, conf=self._conf_thresh, verbose=False)
+            for r in results:
+                boxes = r.boxes
+                if boxes is None:
+                    continue
+                for box in boxes:
+                    xyxy = box.xyxy[0].cpu().numpy()
+                    conf = float(box.conf[0].cpu().numpy())
+                    # Map tile-local coords back to full-frame coords
+                    abs_x1 = xyxy[0] + x1
+                    abs_y1 = xyxy[1] + y1
+                    abs_x2 = xyxy[2] + x1
+                    abs_y2 = xyxy[3] + y1
+                    cx = (abs_x1 + abs_x2) / 2.0
+                    cy = (abs_y1 + abs_y2) / 2.0
+                    bw = abs_x2 - abs_x1
+                    bh = abs_y2 - abs_y1
+                    all_dets.append({
+                        "cx": cx, "cy": cy,
+                        "w": bw, "h": bh,
+                        "conf": conf,
+                        "xyxy": [abs_x1, abs_y1, abs_x2, abs_y2],
+                    })
+
+        # Merge overlapping detections via NMS
+        return self._nms(all_dets, self._slice_nms_thresh)
+
+    @staticmethod
+    def _nms(
+        detections: List[Dict[str, Any]], iou_threshold: float
+    ) -> List[Dict[str, Any]]:
+        """Simple greedy NMS on a list of detection dicts."""
+        if not detections:
+            return []
+
+        # Sort by confidence (highest first)
+        dets = sorted(detections, key=lambda d: d["conf"], reverse=True)
+        keep: List[Dict[str, Any]] = []
+
+        while dets:
+            best = dets.pop(0)
+            keep.append(best)
+            remaining: List[Dict[str, Any]] = []
+            bx1, by1, bx2, by2 = best["xyxy"]
+            b_area = (bx2 - bx1) * (by2 - by1)
+            for det in dets:
+                dx1, dy1, dx2, dy2 = det["xyxy"]
+                ix1 = max(bx1, dx1)
+                iy1 = max(by1, dy1)
+                ix2 = min(bx2, dx2)
+                iy2 = min(by2, dy2)
+                inter = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+                d_area = (dx2 - dx1) * (dy2 - dy1)
+                union = b_area + d_area - inter
+                iou = inter / union if union > 0 else 0.0
+                if iou < iou_threshold:
+                    remaining.append(det)
+            dets = remaining
+
+        return keep

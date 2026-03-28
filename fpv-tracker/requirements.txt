@@ -6,6 +6,6 @@ pyyaml>=6.0
 # Audio
 pygame>=2.5
 
-# YOLO (Phase 4 — optional, install when ready)
-# ultralytics>=8.0
-# torch>=2.0
+# YOLO detection
+ultralytics>=8.0
+torch>=2.0

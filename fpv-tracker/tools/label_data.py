@@ -19,7 +19,9 @@ def main() -> None:
     parser.add_argument("video", type=str, help="Path to recorded video file")
     parser.add_argument("--config", type=str, default="config.yaml", help="Config YAML path")
     parser.add_argument("--output-dir", type=str, default="dataset/", help="Output directory for labels + images")
-    parser.add_argument("--bbox-size", type=int, default=40, help="Default bounding box side length (pixels)")
+    parser.add_argument("--bbox-size", type=int, default=20,
+                        help="Default bounding box side length in pixels "
+                             "(use small values like 10-20 for distant drones)")
     parser.add_argument("--min-confidence", type=float, default=0.7,
                         help="Minimum tracker confidence to auto-propose a label")
     parser.add_argument("--every-n", type=int, default=5, help="Label every Nth frame")
