@@ -33,6 +33,17 @@ yolo:
   model_path: "models/best.pt"
   confidence_threshold: 0.5
   imgsz: 640
+  # Sliced inference (SAHI-style) — improves recall on tiny / distant
+  # drones by running the model on tiles at full resolution.
+  # 'adaptive' mode (default) only tiles around the Kalman-predicted
+  # position, keeping inference to ~2 YOLO passes instead of N.
+  slice_inference:
+    enabled: false          # set to true when tracking very small drones
+    adaptive: true           # true = 1 focused tile + full-frame (fast)
+                             # false = tile the entire frame (thorough)
+    slice_size: 640         # tile side length in pixels
+    overlap: 0.25           # fractional overlap (full-frame mode only)
+    nms_threshold: 0.5      # IoU threshold for merging duplicate detections
 
 audio:
   enabled: true
