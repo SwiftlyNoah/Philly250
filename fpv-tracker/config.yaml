@@ -1,0 +1,51 @@
+video:
+  device_index: 0
+  width: 720
+  height: 480
+  crop: [20, 20, 700, 460]    # x, y, w, h
+  flip: false
+
+pixel_tracker:
+  feature_count: 300
+  feature_quality: 0.01
+  feature_min_distance: 10
+  lk_window_size: 21
+  lk_pyramid_levels: 3
+  ransac_threshold: 3.0
+  min_inlier_ratio: 0.5
+  diff_threshold: 25
+  blur_kernel: 5
+  morph_kernel: 3
+  min_blob_area: 1
+  max_blob_area: 500
+  search_radius: 100
+  edge_margin: 40
+  target_exclusion_radius: 50
+
+kalman:
+  process_noise: 0.01
+  measurement_noise: 0.1
+  max_frames_lost: 30
+  confidence_engage: 0.7
+  confidence_disengage: 0.2
+
+yolo:
+  model_path: "models/best.pt"
+  confidence_threshold: 0.5
+  imgsz: 640
+
+audio:
+  enabled: true
+  volume: 0.7
+  min_beep_interval: 0.1
+  max_beep_interval: 1.0
+  deadzone_pixels: 15
+
+logging:
+  enabled: true
+  output_dir: "logs/"
+
+overlay:
+  trajectory_length: 100
+  arrow_scale: 1.5
+  lead_indicator_frames: 10
