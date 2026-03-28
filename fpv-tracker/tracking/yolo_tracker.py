@@ -44,6 +44,31 @@ class YOLOTracker(TrackerBase):
         except Exception:
             self._model = None
 
+    def load_weights(self, weights_path: str) -> bool:
+        """Load (or swap) YOLO weights at runtime.
+
+        Parameters
+        ----------
+        weights_path : str
+            Path to a ``.pt`` weights file (e.g. your own trained model).
+
+        Returns
+        -------
+        bool
+            True if the model was loaded successfully.
+        """
+        old_path = self._model_path
+        self._model_path = weights_path
+        try:
+            from ultralytics import YOLO
+            self._model = YOLO(self._model_path)
+            return True
+        except Exception as exc:
+            print(f"WARNING: Failed to load YOLO weights from {weights_path}: {exc}")
+            self._model_path = old_path
+            self._load_model()  # try to restore the previous model
+            return False
+
     @property
     def name(self) -> str:
         return "yolo"

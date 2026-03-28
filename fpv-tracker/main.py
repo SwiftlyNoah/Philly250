@@ -48,6 +48,8 @@ def _parse_args() -> argparse.Namespace:
                    help="Start with debug view enabled")
     p.add_argument("--tuning", action="store_true",
                    help="Open the tuning-slider GUI")
+    p.add_argument("--yolo-weights", type=str, default=None,
+                   help="Path to custom YOLO .pt weights file (overrides config)")
     return p.parse_args()
 
 
@@ -90,8 +92,15 @@ def main() -> None:
     ycfg = config.get_section("yolo")
     ycfg["kalman"] = config.get_section("kalman")
 
+    # CLI weight path overrides config
+    if args.yolo_weights:
+        ycfg["model_path"] = args.yolo_weights
+
     pixel_tracker = PixelTracker(pcfg)
     yolo_tracker = YOLOTracker(ycfg)
+
+    if args.yolo_weights and yolo_tracker.model_loaded:
+        print(f"YOLO weights loaded from {args.yolo_weights}")
 
     active_tracker: TrackerBase = pixel_tracker
 
